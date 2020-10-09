@@ -1,0 +1,8 @@
+{
+  "Parameters" : {
+    "KMSKeyId" : "",
+    "Environment" : "sandboxus",
+    "Role": "CAMM7NonProdUSFedidpEngineer",
+    "EnableBucketEncryption": "Disabled"
+  }
+}
