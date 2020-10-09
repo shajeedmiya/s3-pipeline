@@ -1,0 +1,424 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "CodeBuild using CodePipeline for CAMM 7 S3 bucket creation",
+    "Parameters": {
+        "GitHubRepoUrl": {
+            "Type": "String",
+            "Description": "GitHub repo URL",
+            "Default": "https://github.cerner.com/Ehosting/CAMM-CERN_CPS-AWS-S3-Buckets.git"
+        },
+        "GitHubBranch": {
+            "Type": "String",
+            "Description": "GitHub branch",
+            "Default": "master"
+        },
+        "BuildType": {
+            "Type": "String",
+            "Description": "CodeBuild container type",
+            "Default": "LINUX_CONTAINER"
+        },
+        "BuildComputeType": {
+            "Type": "String",
+            "Description": "CodeBuild compute type",
+            "Default": "BUILD_GENERAL1_SMALL"
+        },
+        "BuildImage": {
+            "Type": "String",
+            "Description": "CodeBuild image",
+            "Default": "aws/codebuild/standard:4.0"
+        },
+        "CodeBuildRole": {
+            "Type": "String",
+            "Description": "CodeBuild role",
+            "Default": "camm7-codebuildrole"
+        },
+        "PipelineRole": {
+            "Description": "Role used by codepipeline",
+            "Type": "String",
+            "Default": "camm7-pipelinerole"
+        },
+        "CfnRole": {
+            "Type": "String",
+            "Description": "CloudFormation role",
+            "Default": "camm7-cfnrole"
+        },
+        "PipelineBucketName": {
+            "Type": "String",
+            "Description": "S3 bucket name for CodeBuild and CodePipeline",
+            "Default": "camm7-s3-pipeline"
+        },
+        "DeployEnvironment": {
+            "AllowedValues": [
+                "dev",
+                "preprod",
+                "prod"
+            ],
+            "Type": "String"
+        },
+        "Camm7Environment": {
+            "Type": "String",
+            "AllowedValues": [
+                "us-sandboxus",
+                "us-prod-east4",
+                "us-prod-west5",
+                "au0",
+                "au1"
+            ]
+        },
+        "CodeBuildVPC": {
+            "Type": "AWS::EC2::VPC::Id",
+            "Description": "VPC where the codebuild project will run"
+        },
+        "CodeBuildSubnet": {
+            "Type": "List<AWS::EC2::Subnet::Id>",
+            "Description": "Subnet in the VPC for the codebuild to run"
+        },
+        "SourceS3ObjectKey": {
+            "Description": "Name of the zip file containing the artifacts from GitHub",
+            "Type": "String",
+            "Default": "output.zip"
+        },
+        "S3StackName": {
+            "Description": "CloudFormation stack name for S3 deployment",
+            "Type": "String",
+            "Default": "camm7-Sandbox-S3bkt"
+        },
+        "S3ChangeSetName": {
+            "Description": "A name for the S3 stack changeset",
+            "Type": "String",
+            "Default": "s3-changeset"
+        },
+        "Email": {
+            "Description": "The email address where CodePipeline sends pipeline notifications",
+            "Type": "String"
+        }
+    },
+    "Metadata": {
+        "AWS::CloudFormation::Interface": {
+            "ParameterGroups": [
+                {
+                    "Label": {
+                        "default": "GitHub Configuration"
+                    },
+                    "Parameters": [
+                        "GitHubBranch",
+                        "GitHubRepoUrl"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "Environments"
+                    },
+                    "Parameters": [
+                        "DeployEnvironment",
+                        "Camm7Environment"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "CloudFormation Configuration"
+                    },
+                    "Parameters": [
+                        "S3StackName",
+                        "S3ChangeSetName"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "CodeBuild Configuration"
+                    },
+                    "Parameters": [
+                        "BuildType",
+                        "BuildComputeType",
+                        "BuildImage",
+                        "SourceS3ObjectKey"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "Network Configuration"
+                    },
+                    "Parameters": [
+                        "CodeBuildVPC",
+                        "CodeBuildSubnet"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "Roles"
+                    },
+                    "Parameters": [
+                        "CodeBuildRole",
+                        "PipelineRole",
+                        "CfnRole"
+                    ]
+                }
+            ]
+        }
+    },
+    "Conditions": {
+        "EnableEmailNotification": {
+            "Fn::Not": [
+                {
+                    "Fn::Equals": [
+                        {
+                            "Ref": "Email"
+                        },
+                        ""
+                    ]
+                }
+            ]
+        }
+    },
+    "Resources": {
+        "PipelineBucket": {
+            "Type": "AWS::S3::Bucket",
+            "DeletionPolicy": "Delete",
+            "Properties": {
+                "BucketName": {
+                    "Ref": "PipelineBucketName"
+                },
+                "VersioningConfiguration": {
+                    "Status": "Enabled"
+                }
+            }
+        },
+        "CodeBuildProject": {
+            "Type": "AWS::CodeBuild::Project",
+            "Properties": {
+                "Name": {
+                    "Fn::Sub": "CodeBuild-${AWS::StackName}"
+                },
+                "Description": "Deploy artifacts to S3",
+                "ServiceRole": {
+                    "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/${CodeBuildRole}"
+                },
+                "Artifacts": {
+                    "Type": "NO_ARTIFACTS"
+                },
+                "Environment": {
+                    "Type": {
+                        "Ref": "BuildType"
+                    },
+                    "ComputeType": {
+                        "Ref": "BuildComputeType"
+                    },
+                    "Image": {
+                        "Ref": "BuildImage"
+                    },
+                    "EnvironmentVariables": [
+                        {
+                            "Name": "AWS_REGION",
+                            "Value": {
+                                "Fn::Sub": "${AWS::Region}"
+                            }
+                        },
+                        {
+                            "Name": "DEPLOY_ENVIRONMENT",
+                            "Value": {
+                                "Ref": "DeployEnvironment"
+                            }
+                        },
+                        {
+                            "Name": "CAMM7_ENVIRONMENT",
+                            "Value": {
+                                "Ref": "Camm7Environment"
+                            }
+                        }
+                    ]
+                },
+                "SourceVersion": {
+                    "Ref": "GitHubBranch"
+                },
+                "Source": {
+                    "Type": "GITHUB_ENTERPRISE",
+                    "Location": {
+                        "Ref": "GitHubRepoUrl"
+                    },
+                    "BuildSpec": {
+                        "Fn::Sub": "version: 0.2\nenv:\n  shell: bash\nphases:\n  pre_build:\n    commands:\n      - apt-get update && apt -y install sudo\n  post_build:\n    commands:\n      - echo \"AWS_REGION $AWS_REGION\"\n      - echo \"DEPLOY_ENVIRONMENT $DEPLOY_ENVIRONMENT\"\n      - echo \"CAMM7_ENVIRONMENT $CAMM7_ENVIRONMENT\"\n      - export CFT=\"config/${!AWS_REGION}/${!DEPLOY_ENVIRONMENT}/s3-${!CAMM7_ENVIRONMENT}-cft.json\"\n      - export PARAM=\"config/${!AWS_REGION}/${!DEPLOY_ENVIRONMENT}/s3-${!CAMM7_ENVIRONMENT}-param.json\"\n      - chmod +x scripts/build-s3-cft.sh\n      - chmod +x scripts/build-s3-param.sh\n      - ./scripts/build-s3-cft.sh $AWS_REGION $DEPLOY_ENVIRONMENT $CAMM7_ENVIRONMENT > $CFT\n      - mkdir deploy\n      - zip deploy/output.zip * -r\n      - aws s3 cp deploy/output.zip s3://${PipelineBucket}\n"
+                    }
+                },
+                "TimeoutInMinutes": 10,
+                "VpcConfig": {
+                    "VpcId": {
+                        "Ref": "CodeBuildVPC"
+                    },
+                    "Subnets": {
+                        "Ref": "CodeBuildSubnet"
+                    },
+                    "SecurityGroupIds": [
+                        {
+                            "Ref": "CodeBuildSecurityGroup"
+                        }
+                    ]
+                },
+                "LogsConfig": {
+                    "CloudWatchLogs": {
+                        "Status": "ENABLED",
+                        "StreamName": "String"
+                    }
+                }
+            }
+        },
+        "CodeBuildSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupName": {
+                    "Fn::Sub": "CAMM7 Codebuild Group-${AWS::StackName}"
+                },
+                "GroupDescription": "CAMM7 CodeBuild SecurityGroup",
+                "VpcId": {
+                    "Ref": "CodeBuildVPC"
+                }
+            }
+        },
+        "Pipeline": {
+            "Type": "AWS::CodePipeline::Pipeline",
+            "DependsOn": "PipelineBucket",
+            "Properties": {
+                "RoleArn": {
+                    "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/${PipelineRole}"
+                },
+                "Stages": [
+                    {
+                        "Name": "Source",
+                        "Actions": [
+                            {
+                                "Name": "S3Source",
+                                "ActionTypeId": {
+                                    "Category": "Source",
+                                    "Owner": "AWS",
+                                    "Version": 1,
+                                    "Provider": "S3"
+                                },
+                                "OutputArtifacts": [
+                                    {
+                                        "Name": "SourceArtifacts"
+                                    }
+                                ],
+                                "Configuration": {
+                                    "S3Bucket": {
+                                        "Ref": "PipelineBucket"
+                                    },
+                                    "S3ObjectKey": {
+                                        "Ref": "SourceS3ObjectKey"
+                                    }
+                                },
+                                "RunOrder": 1
+                            }
+                        ]
+                    },
+                    {
+                        "Name": "DeployStage",
+                        "Actions": [
+                            {
+                                "Name": "CreateS3BucketChangeSet",
+                                "ActionTypeId": {
+                                    "Category": "Deploy",
+                                    "Owner": "AWS",
+                                    "Provider": "CloudFormation",
+                                    "Version": 1
+                                },
+                                "InputArtifacts": [
+                                    {
+                                        "Name": "SourceArtifacts"
+                                    }
+                                ],
+                                "Configuration": {
+                                    "ActionMode": "CHANGE_SET_REPLACE",
+                                    "RoleArn": {
+                                        "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/${CfnRole}"
+                                    },
+                                    "StackName": {
+                                        "Ref": "S3StackName"
+                                    },
+                                    "ChangeSetName": {
+                                        "Ref": "S3ChangeSetName"
+                                    },
+                                    "TemplatePath": {
+                                        "Fn::Sub": "SourceArtifacts::config/${AWS::Region}/${DeployEnvironment}/s3-${Camm7Environment}-cft.json"
+                                    },
+                                    "TemplateConfiguration": {
+                                        "Fn::Sub": "SourceArtifacts::config/${AWS::Region}/${DeployEnvironment}/s3-${Camm7Environment}-param.json"
+                                    }
+                                },
+                                "RunOrder": 1
+                            },
+                            {
+                                "Name": "ApproveChangeSet",
+                                "ActionTypeId": {
+                                    "Category": "Approval",
+                                    "Owner": "AWS",
+                                    "Provider": "Manual",
+                                    "Version": 1
+                                },
+                                "Configuration": {
+                                    "NotificationArn": {
+                                        "Ref": "CodePipelineSNSTopic"
+                                    },
+                                    "CustomData": {
+                                        "Fn::Sub": "A new S3 change set was created for ${AWS::Region} ${Camm7Environment}. Do you want to implement the changes?"
+                                    }
+                                },
+                                "RunOrder": 2
+                            },
+                            {
+                                "Name": "ExecuteS3BucketChangeSet",
+                                "ActionTypeId": {
+                                    "Category": "Deploy",
+                                    "Owner": "AWS",
+                                    "Provider": "CloudFormation",
+                                    "Version": 1
+                                },
+                                "Configuration": {
+                                    "ActionMode": "CHANGE_SET_EXECUTE",
+                                    "ChangeSetName": {
+                                        "Ref": "S3ChangeSetName"
+                                    },
+                                    "RoleArn": {
+                                        "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/${CfnRole}"
+                                    },
+                                    "StackName": {
+                                        "Ref": "S3StackName"
+                                    }
+                                },
+                                "RunOrder": 3
+                            }
+                        ]
+                    }
+                ],
+                "ArtifactStore": {
+                    "Type": "S3",
+                    "Location": {
+                        "Ref": "PipelineBucket"
+                    }
+                }
+            }
+        },
+        "EmailNotificationSubscription": {
+            "Condition": "EnableEmailNotification",
+            "Type": "AWS::SNS::Subscription",
+            "Properties": {
+                "Endpoint": {
+                    "Ref": "Email"
+                },
+                "Protocol": "email",
+                "TopicArn": {
+                    "Ref": "CodePipelineSNSTopic"
+                }
+            }
+        },
+        "CodePipelineSNSTopic": {
+            "Type": "AWS::SNS::Topic"
+        }
+    },
+    "Outputs": {
+        "PipelineUrl": {
+            "Value": {
+                "Fn::Sub": "https://console.aws.amazon.com/codepipeline/home?region=${AWS::Region}#/view/${Pipeline}"
+            },
+            "Description": "CodePipeline URL"
+        }
+    }
+}
